@@ -545,7 +545,7 @@ class AWSBucket(WazuhIntegration):
         self.bucket_path = self.bucket + '/' + self.prefix
         self.aws_organization_id = aws_organization_id
         self.date_regex = re.compile(r'(\d{4}/\d{2}/\d{2})')
-        self.prefix_regex = re.compile("^\d{12}$")
+        self.prefix_regex= re.compile(r"^\d{12}$")
         self.check_prefix = False
         self.date_format = "%Y/%m/%d"
         self.db_date_format = "%Y%m%d"
@@ -1598,7 +1598,7 @@ class AWSVPCFlowBucket(AWSLogsBucket):
                 flow_log_id,
                 log_key,
                 processed_date,
-                created_date) 
+                created_date)
             VALUES (
                 :bucket_path,
                 :aws_account_id,
@@ -2005,7 +2005,7 @@ class AWSCustomBucket(AWSBucket):
                 aws_account_id,
                 log_key,
                 processed_date,
-                created_date) 
+                created_date)
             VALUES (
                 :bucket_path,
                 :aws_account_id,
