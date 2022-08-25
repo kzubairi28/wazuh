@@ -980,6 +980,9 @@ void OS_ReadMSG_analysisd(int m_queue)
         merror_exit(HSETSIZE_ERROR, "analysisd_agents_state");
     }
 
+    /* Initialize EPS limits */
+    load_limits(Config.eps.maximum, Config.eps.timeframe);
+
     /* Create message handler thread */
     w_create_thread(ad_input_main, &m_queue);
 
@@ -1056,6 +1059,7 @@ void OS_ReadMSG_analysisd(int m_queue)
 
     while (1) {
         sleep(1);
+        update_limits();
     }
 }
 
@@ -1457,9 +1461,11 @@ void * w_decode_syscheck_thread(__attribute__((unused)) void * args){
     /* Initialize the integrity database */
     sdb_init(&sdb, fim_decoder);
 
-    while(1){
+    while(1) {
         /* Receive message from queue */
         if (msg = queue_pop_ex(decode_queue_syscheck_input), msg) {
+            get_eps_credit();
+
             int res = 0;
             os_calloc(1, sizeof(Eventinfo), lf);
             os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
@@ -1505,9 +1511,11 @@ void * w_decode_syscollector_thread(__attribute__((unused)) void * args){
     char *msg = NULL;
     int socket = -1;
 
-    while(1){
+    while(1) {
         /* Receive message from queue */
         if (msg = queue_pop_ex(decode_queue_syscollector_input), msg) {
+            get_eps_credit();
+
             os_calloc(1, sizeof(Eventinfo), lf);
             os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
 
@@ -1545,9 +1553,11 @@ void * w_decode_rootcheck_thread(__attribute__((unused)) void * args){
     Eventinfo *lf = NULL;
     char *msg = NULL;
 
-    while(1){
+    while(1) {
         /* Receive message from queue */
         if (msg = queue_pop_ex(decode_queue_rootcheck_input), msg) {
+            get_eps_credit();
+
             os_calloc(1, sizeof(Eventinfo), lf);
             os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
 
@@ -1586,9 +1596,11 @@ void * w_decode_sca_thread(__attribute__((unused)) void * args){
     char *msg = NULL;
     int socket = -1;
 
-    while(1){
+    while(1) {
         /* Receive message from queue */
         if (msg = queue_pop_ex(decode_queue_sca_input), msg) {
+            get_eps_credit();
+
             os_calloc(1, sizeof(Eventinfo), lf);
             os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
 
@@ -1626,9 +1638,11 @@ void * w_decode_hostinfo_thread(__attribute__((unused)) void * args){
     Eventinfo *lf = NULL;
     char * msg = NULL;
 
-    while(1){
+    while(1) {
         /* Receive message from queue */
         if (msg = queue_pop_ex(decode_queue_hostinfo_input), msg) {
+            get_eps_credit();
+
             os_calloc(1, sizeof(Eventinfo), lf);
             os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
 
@@ -1670,9 +1684,11 @@ void * w_decode_event_thread(__attribute__((unused)) void * args){
     memset(&decoder_match, 0, sizeof(regex_matching));
     int sock = -1;
 
-    while(1){
+    while(1) {
         /* Receive message from queue */
         if (msg = queue_pop_ex(decode_queue_event_input), msg) {
+            get_eps_credit();
+
             os_calloc(1, sizeof(Eventinfo), lf);
             os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
 
@@ -1715,13 +1731,15 @@ void * w_decode_event_thread(__attribute__((unused)) void * args){
     }
 }
 
-void * w_decode_winevt_thread(__attribute__((unused)) void * args){
+void * w_decode_winevt_thread(__attribute__((unused)) void * args) {
     Eventinfo *lf = NULL;
     char * msg = NULL;
 
-    while(1){
+    while(1) {
         /* Receive message from queue */
         if (msg = queue_pop_ex(decode_queue_winevt_input), msg) {
+            get_eps_credit();
+
             os_calloc(1, sizeof(Eventinfo), lf);
             os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
 
@@ -1761,26 +1779,27 @@ void * w_dispatch_dbsync_thread(__attribute__((unused)) void * args) {
     dbsync_context_t ctx = { .db_sock = -1, .ar_sock = -1 };
 
     for (;;) {
-        msg = queue_pop_ex(dispatch_dbsync_input);
-        assert(msg != NULL);
+        if (msg = queue_pop_ex(dispatch_dbsync_input), msg) {
+            get_eps_credit();
 
-        os_calloc(1, sizeof(Eventinfo), lf);
-        os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
-        Zero_Eventinfo(lf);
+            os_calloc(1, sizeof(Eventinfo), lf);
+            os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
+            Zero_Eventinfo(lf);
 
-        if (OS_CleanMSG(msg, lf) < 0) {
-            merror(IMSG_ERROR, msg);
-            Free_Eventinfo(lf);
+            if (OS_CleanMSG(msg, lf) < 0) {
+                merror(IMSG_ERROR, msg);
+                Free_Eventinfo(lf);
+                free(msg);
+                continue;
+            }
+
             free(msg);
-            continue;
+
+            w_inc_dbsync_decoded_events(lf->agent_id);
+
+            DispatchDBSync(&ctx, lf);
+            Free_Eventinfo(lf);
         }
-
-        free(msg);
-
-        w_inc_dbsync_decoded_events(lf->agent_id);
-
-        DispatchDBSync(&ctx, lf);
-        Free_Eventinfo(lf);
     }
 
     return NULL;
@@ -1791,55 +1810,56 @@ void * w_dispatch_upgrade_module_thread(__attribute__((unused)) void * args) {
     Eventinfo * lf;
 
     while (true) {
-        msg = queue_pop_ex(upgrade_module_input);
-        assert(msg != NULL);
+        if (msg = queue_pop_ex(upgrade_module_input), msg) {
+            get_eps_credit();
 
-        os_calloc(1, sizeof(Eventinfo), lf);
-        os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
-        Zero_Eventinfo(lf);
+            os_calloc(1, sizeof(Eventinfo), lf);
+            os_calloc(Config.decoder_order_size, sizeof(DynamicField), lf->fields);
+            Zero_Eventinfo(lf);
 
-        if (OS_CleanMSG(msg, lf) < 0) {
-            merror(IMSG_ERROR, msg);
-            Free_Eventinfo(lf);
-            free(msg);
-            continue;
-        }
-
-        free(msg);
-
-        w_inc_modules_upgrade_decoded_events(lf->agent_id);
-
-        // Inserts agent id into incomming message and sends it to upgrade module
-        cJSON *message_obj = cJSON_Parse(lf->log);
-
-        if (message_obj) {
-            cJSON *message_params = cJSON_GetObjectItem(message_obj, "parameters");
-
-            if (message_params) {
-                int sock = OS_ConnectUnixDomain(WM_UPGRADE_SOCK, SOCK_STREAM, OS_MAXSTR);
-
-                if (sock == OS_SOCKTERR) {
-                    merror("Could not connect to upgrade module socket at '%s'. Error: %s", WM_UPGRADE_SOCK, strerror(errno));
-                } else {
-                    int agent = atoi(lf->agent_id);
-                    cJSON* agents = cJSON_CreateIntArray(&agent, 1);
-                    cJSON_AddItemToObject(message_params, "agents", agents);
-
-                    char *message = cJSON_PrintUnformatted(message_obj);
-                    OS_SendSecureTCP(sock, strlen(message), message);
-                    os_free(message);
-
-                    close(sock);
-                }
-            } else {
-                merror("Could not get parameters from upgrade message: %s", lf->log);
+            if (OS_CleanMSG(msg, lf) < 0) {
+                merror(IMSG_ERROR, msg);
+                Free_Eventinfo(lf);
+                free(msg);
+                continue;
             }
-            cJSON_Delete(message_obj);
-        } else {
-            merror("Could not parse upgrade message: %s", lf->log);
-        }
 
-        Free_Eventinfo(lf);
+            free(msg);
+
+            w_inc_modules_upgrade_decoded_events(lf->agent_id);
+
+            // Inserts agent id into incomming message and sends it to upgrade module
+            cJSON *message_obj = cJSON_Parse(lf->log);
+
+            if (message_obj) {
+                cJSON *message_params = cJSON_GetObjectItem(message_obj, "parameters");
+
+                if (message_params) {
+                    int sock = OS_ConnectUnixDomain(WM_UPGRADE_SOCK, SOCK_STREAM, OS_MAXSTR);
+
+                    if (sock == OS_SOCKTERR) {
+                        merror("Could not connect to upgrade module socket at '%s'. Error: %s", WM_UPGRADE_SOCK, strerror(errno));
+                    } else {
+                        int agent = atoi(lf->agent_id);
+                        cJSON* agents = cJSON_CreateIntArray(&agent, 1);
+                        cJSON_AddItemToObject(message_params, "agents", agents);
+
+                        char *message = cJSON_PrintUnformatted(message_obj);
+                        OS_SendSecureTCP(sock, strlen(message), message);
+                        os_free(message);
+
+                        close(sock);
+                    }
+                } else {
+                    merror("Could not get parameters from upgrade message: %s", lf->log);
+                }
+                cJSON_Delete(message_obj);
+            } else {
+                merror("Could not parse upgrade message: %s", lf->log);
+            }
+
+            Free_Eventinfo(lf);
+        }
     }
 
     return NULL;
