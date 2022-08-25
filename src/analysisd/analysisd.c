@@ -28,6 +28,7 @@
 #include "os_net/os_net.h"
 #include "active-response.h"
 #include "config.h"
+#include "limits.h"
 #include "rules.h"
 #include "mitre.h"
 #include "stats.h"
@@ -1059,6 +1060,11 @@ void OS_ReadMSG_analysisd(int m_queue)
 
     while (1) {
         sleep(1);
+
+        if (limit_reached(NULL)) {
+            w_inc_eps_seconds_over_limit();
+        }
+
         update_limits();
     }
 }
@@ -1372,6 +1378,10 @@ void * ad_input_main(void * args) {
                         reported_event = 1;
                     }
                 }
+            }
+
+            if (result == -1 && limit_reached(NULL)) {
+                w_inc_eps_events_dropped();
             }
         }
     }
