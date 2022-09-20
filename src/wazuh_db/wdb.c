@@ -13,6 +13,13 @@
 #include "wazuh_modules/wmodules.h"
 #include "wazuhdb_op.h"
 
+#ifdef WAZUH_UNIT_TESTING
+// Remove STATIC qualifier from tests
+#define STATIC
+#else
+#define STATIC static
+#endif
+
 #ifdef WIN32
     #define getuid() 0
     #define chown(x, y, z) 0
@@ -32,6 +39,11 @@ const char* WDBC_RESULT[] = {
     [WDBC_UNKNOWN] = "unk"
 };
 
+static const char *SQL_CREATE_TEMP_TABLE = "CREATE TEMP TABLE s(rowid INTEGER PRIMARY KEY, pageno INT);";
+static const char *SQL_INSERT_INTO_TEMP_TABLE = "INSERT INTO s(pageno) SELECT pageno FROM dbstat ORDER BY path;";
+static const char *SQL_SELECT_TEMP_TABLE = "SELECT sum(s1.pageno+1==s2.pageno)*1.0/count(*) FROM s AS s1, s AS s2 WHERE s1.rowid+1=s2.rowid;";
+static const char *SQL_DROP_TEMP_TABLE = "DROP TABLE s;";
+static const char *SQL_DROP_TEMP_TABLE_IF_EXISTS = "DROP TABLE IF EXISTS s;";
 static const char *SQL_VACUUM = "VACUUM;";
 static const char *SQL_INSERT_INFO = "INSERT INTO info (key, value) VALUES (?, ?);";
 static const char *SQL_BEGIN = "BEGIN;";
@@ -259,6 +271,12 @@ static const char *SQL_STMT[] = {
     [WDB_STMT_SYS_PROGRAMS_GET_NOT_TRIAGED] = "SELECT DISTINCT NAME, VERSION, ARCHITECTURE, VENDOR, SOURCE, CPE, MSU_NAME, ITEM_ID FROM SYS_PROGRAMS WHERE TRIAGED != 1;",
     [WDB_STMT_SYS_PROGRAMS_SET_TRIAGED] = "UPDATE SYS_PROGRAMS SET TRIAGED = 1;",
 };
+
+/* Run a query without selecting any fields */
+STATIC int wdb_execute_non_select_query(sqlite3 *db, const char *query);
+
+/* Select from temp table */
+STATIC int wdb_select_from_temp_table(sqlite3 *db);
 
 wdb_config wconfig;
 pthread_mutex_t pool_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -776,7 +794,82 @@ int wdb_vacuum(sqlite3 *db) {
         result = -1;
     }
 
-    sqlite3_close_v2(db);
+    return result;
+}
+
+/* Calculate the fragmentation state of a db. Returns 0-100 on success or OS_INVALID on error. */
+int wdb_get_db_state(wdb_t * wdb) {
+    int result = OS_INVALID;
+
+    if (wdb_execute_non_select_query(wdb->db, SQL_DROP_TEMP_TABLE_IF_EXISTS) == OS_INVALID) {
+        mdebug1("Error, temporary table was previously created and it was not possible to drop it.");
+        return OS_INVALID;
+    }
+
+    if (wdb_execute_non_select_query(wdb->db, SQL_CREATE_TEMP_TABLE) == OS_INVALID) {
+        mdebug1("Error creating temporary table.");
+        return OS_INVALID;
+    }
+
+    if (wdb_execute_non_select_query(wdb->db, SQL_INSERT_INTO_TEMP_TABLE) != OS_INVALID) {
+        if (result = wdb_select_from_temp_table(wdb->db), result == OS_INVALID) {
+            mdebug1("Error in select from temporary table.");
+        }
+    } else {
+        mdebug1("Error inserting into temporary table.");
+        result = OS_INVALID;
+    }
+
+    if (wdb_execute_non_select_query(wdb->db, SQL_DROP_TEMP_TABLE) == OS_INVALID) {
+        mdebug1("Error dropping temporary table.");
+    }
+
+    return result;
+}
+
+/* Run a query without selecting any fields */
+STATIC int wdb_execute_non_select_query(sqlite3 *db, const char *query) {
+    sqlite3_stmt *stmt = NULL;
+    int result = OS_SUCCESS;
+
+    if (query == NULL) {
+        mdebug1("wdb_execute_non_select_query(): null query.");
+        return OS_INVALID;
+    }
+
+    if (sqlite3_prepare_v2(db, query, -1, &stmt, NULL) != SQLITE_OK) {
+        mdebug1("sqlite3_prepare_v2(): %s", sqlite3_errmsg(db));
+        return OS_INVALID;
+    }
+
+    if (result = wdb_step(stmt) != SQLITE_DONE, result) {
+        mdebug1("wdb_step(): %s", sqlite3_errmsg(db));
+        result = OS_INVALID;
+    }
+
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+/* Select from temp table */
+STATIC int wdb_select_from_temp_table(sqlite3 *db) {
+    sqlite3_stmt *stmt = NULL;
+    int result = 0;
+
+    if (sqlite3_prepare_v2(db, SQL_SELECT_TEMP_TABLE, -1, &stmt, NULL) != SQLITE_OK) {
+        mdebug1("sqlite3_prepare_v2(): %s", sqlite3_errmsg(db));
+        return OS_INVALID;
+    }
+
+    if (result = wdb_step(stmt), SQLITE_ROW == result) {
+        result = 100 - (int)(sqlite3_column_double(stmt, 0) * 100);
+    } else {
+        mdebug1("wdb_step(): %s", sqlite3_errmsg(db));
+        result = OS_INVALID;
+    }
+
+    sqlite3_finalize(stmt);
+
     return result;
 }
 

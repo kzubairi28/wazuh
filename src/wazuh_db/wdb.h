@@ -694,6 +694,9 @@ int wdb_rootcheck_delete(wdb_t * wdb);
 /* Rebuild database. Returns 0 on success or -1 on error. */
 int wdb_vacuum(sqlite3 *db);
 
+/* Calculate the fragmentation state of a db. Returns 0-100 on success or OS_INVALID on error. */
+int wdb_get_db_state(wdb_t * wdb);
+
 /* Insert key-value pair into info table */
 int wdb_insert_info(const char *key, const char *value);
 
