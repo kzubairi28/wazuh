@@ -220,12 +220,7 @@ static void dbsync_attributes_json(const cJSON *dbsync_event, const directory_t 
 
     if (configuration->options & CHECK_PERM) {
         if (aux = cJSON_GetObjectItem(dbsync_event, "perm"), aux != NULL) {
-#ifndef WIN32
-            cJSON_AddStringToObject(attributes, "perm", cJSON_GetStringValue(aux));
-#else
-
-            cJSON_AddItemToObject(attributes, "perm", cJSON_Duplicate(aux, 1));
-#endif
+            cJSON_AddStringToObject(attributes, "perm", cJSON_PrintUnformatted(aux));
         }
     }
 
@@ -1448,7 +1443,7 @@ cJSON * fim_attributes_json(const fim_file_data * data) {
 #ifndef WIN32
         cJSON_AddStringToObject(attributes, "perm", data->perm);
 #else
-        cJSON_AddItemToObject(attributes, "perm", cJSON_Duplicate(data->perm_json, 1));
+        cJSON_AddStringToObject(attributes, "perm", cJSON_PrintUnformatted(data->perm_json));
 #endif
     }
 
