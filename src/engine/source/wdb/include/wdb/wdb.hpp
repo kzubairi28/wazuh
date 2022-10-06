@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <optional>
 
 #include <utils/socketInterface/unixSecureStream.hpp>
 
